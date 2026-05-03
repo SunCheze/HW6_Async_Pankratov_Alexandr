@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # 1. Брокер сообщений
+  rabbitmq:
+    image: "rabbitmq:3.12-management"
+    ports:
+      - "5672:5672" # Порт для Celery
+      - "15672:15672" # Веб-интерфейс для просмотра очередей (логин/пароль: guest/guest)
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+
+  # 2. API Сервис (Входная точка)
+  api:
+    build: .
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # 3. ML Воркер (Фоновая обработка)
+  worker:
+    build: .
+    # Запускаем воркер. --pool=solo нужен для стабильной работы с PyTorch в контейнере
+    command: celery -A src.tasks.celery_app worker --loglevel=info --pool=solo
+    env_file:
+      - .env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
